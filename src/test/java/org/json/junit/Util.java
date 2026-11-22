@@ -117,4 +117,58 @@ public class Util {
             );
         }
     }
+
+    /**
+     * Runs the given code on a new thread that has a large (8 MiB) stack and
+     * returns whatever it threw. Tests that drive a recursive parser to its
+     * default maximum nesting depth use this so that the depth limit, and not
+     * the stack size of the test JVM, decides the outcome: the tests may be run
+     * with a small stack (for example -Xss512k), where hundreds of nested parser
+     * frames can overflow the stack before the depth limit is reached.
+     * @param body the code to run
+     * @return the Throwable thrown by body, or null if it completed normally
+     * @throws IllegalStateException if the current thread is interrupted while
+     *      waiting for the body to complete
+     */
+    public static Throwable throwableFromLargeStack(final Runnable body) {
+        final Throwable[] thrown = new Throwable[1];
+        Thread worker = new Thread(null, new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    body.run();
+                } catch (Throwable t) {
+                    thrown[0] = t;
+                }
+            }
+        }, "large-stack-test", 8L * 1024 * 1024);
+        worker.start();
+        try {
+            worker.join();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(
+                    "Interrupted while waiting for the large stack thread", e);
+        }
+        return thrown[0];
+    }
+
+    /**
+     * Asserts that a parser rejected its input because the maximum nesting
+     * depth was reached, rather than completing or failing in another way
+     * (for example with a StackOverflowError).
+     * @param thrown the Throwable thrown by the parser, or null if none was
+     *      thrown
+     * @param maxNestingDepth the maximum nesting depth that should be reported
+     */
+    public static void assertMaxNestingDepthExceeded(Throwable thrown,
+            int maxNestingDepth) {
+        if (thrown == null) {
+            fail("Expecting a JSONException");
+        }
+        assertTrue("Wrong throwable thrown: " + thrown,
+                thrown instanceof JSONException);
+        assertTrue("Wrong throwable thrown: not expecting message <" + thrown.getMessage() + ">",
+                thrown.getMessage().startsWith("Maximum nesting depth of " + maxNestingDepth));
+    }
 }
